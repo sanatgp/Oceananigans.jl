@@ -79,8 +79,23 @@ function divergence_free_poisson_solution(grid_points, ranks, topo, child_arch)
     global_grid = reconstruct_global_grid(local_grid)
     solver = DistributedFFTBasedPoissonSolver(global_grid, local_grid)
 
-    # Using Δt = 1.
+    # ADD TIMING FOR PERFORMANCE COMPARISON
+    comm = MPI.COMM_WORLD
+    rank = MPI.Comm_rank(comm)
+    
+    # Warmup run
     solve_for_pressure!(ϕ, solver, 1, U)
+    
+    # Timed run
+    MPI.Barrier(comm)
+    start_time = MPI.Wtime()
+    solve_for_pressure!(ϕ, solver, 1, U)
+    MPI.Barrier(comm)
+    elapsed_time = MPI.Wtime() - start_time
+    
+    if rank == 0
+        println("ORIGINAL OCEANANIGANS FFT: Grid $(grid_points), Ranks $(ranks), Topology $(topo), Time: $(elapsed_time) seconds")
+    end
 
     # "Recompute" ∇²ϕ
     compute_∇²!(∇²ϕ, ϕ, arch, local_grid)

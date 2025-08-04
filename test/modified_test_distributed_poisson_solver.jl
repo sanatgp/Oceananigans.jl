@@ -49,7 +49,6 @@ function random_divergent_source_term(grid::DistributedGrid)
 
     return R, U
 end
-
 function divergence_free_poisson_solution_dagger(grid_points, ranks, topo, child_arch)
     arch = Distributed(child_arch, partition=Partition(ranks...))
     local_grid = RectilinearGrid(arch, topology=topo, size=grid_points, extent=(2π, 2π, 2π))
@@ -61,16 +60,33 @@ function divergence_free_poisson_solution_dagger(grid_points, ranks, topo, child
 
     global_grid = reconstruct_global_grid(local_grid)
     
+    # Keep using the original solver for now
     solver = DistributedFFTBasedPoissonSolver(global_grid, local_grid)
 
-    # Using Δt = 1.
+    # ADD TIMING
+    comm = MPI.COMM_WORLD
+    rank = MPI.Comm_rank(comm)
+    
+    # Warmup
     solve_for_pressure!(ϕ, solver, 1, U)
+    
+    # Timed solve
+    MPI.Barrier(comm)
+    start_time = MPI.Wtime()
+    solve_for_pressure!(ϕ, solver, 1, U)
+    MPI.Barrier(comm)
+    elapsed_time = MPI.Wtime() - start_time
+    
+    if rank == 0
+        println("DaggerFFT: Grid $(grid_points), Ranks $(ranks), Topology $(topo), Time: $(elapsed_time) seconds")
+    end
 
     # "Recompute" ∇²ϕ
     compute_∇²!(∇²ϕ, ϕ, arch, local_grid)
 
     return Array(interior(∇²ϕ)) ≈ Array(R)
 end
+
 
 function benchmark_dagger_fft_solver(grid_points, ranks, topo, child_arch, iterations=10)
     arch = Distributed(child_arch, partition=Partition(ranks...))
@@ -80,7 +96,7 @@ function benchmark_dagger_fft_solver(grid_points, ranks, topo, child_arch, itera
     R, U = random_divergent_source_term(local_grid)
 
     global_grid = reconstruct_global_grid(local_grid)
-    solver = DistributedFFTBasedPoissonSolver(global_grid, local_grid)
+    solver = DistributedDaggerFFTBasedPoissonSolver(global_grid, local_grid)
 
     # Warmup
     solve_for_pressure!(ϕ, solver, 1, U)
