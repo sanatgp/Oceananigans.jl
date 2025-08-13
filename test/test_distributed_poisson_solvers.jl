@@ -9,6 +9,9 @@ Random.seed!(1234)
 include("dependencies_for_runtests.jl")
 include("dependencies_for_poisson_solvers.jl")
 
+using Dagger
+Dagger.accelerate!(:mpi)
+
 # # Distributed Poisson Solver tests
 #
 # These tests are meant to be run on 4 ranks. This script may be run
@@ -86,15 +89,35 @@ function divergence_free_poisson_solution(grid_points, ranks, topo, child_arch)
     # Warmup run
     solve_for_pressure!(ϕ, solver, 1, U)
     
-    # Timed run
-    MPI.Barrier(comm)
-    start_time = MPI.Wtime()
-    solve_for_pressure!(ϕ, solver, 1, U)
-    MPI.Barrier(comm)
-    elapsed_time = MPI.Wtime() - start_time
+    # Multiple timed runs for better statistics
+    num_runs = 5
+    times = zeros(num_runs)
+    
+    for i in 1:num_runs
+        MPI.Barrier(comm)
+        start_time = MPI.Wtime()
+        solve_for_pressure!(ϕ, solver, 1, U)
+        MPI.Barrier(comm)
+        times[i] = MPI.Wtime() - start_time
+    end
+    
+    avg_time = sum(times) / num_runs
+    min_time = minimum(times)
+    max_time = maximum(times)
     
     if rank == 0
-        println("ORIGINAL OCEANANIGANS FFT: Grid $(grid_points), Ranks $(ranks), Topology $(topo), Time: $(elapsed_time) seconds")
+        println("=============================================================================")
+        println("DAGGERFFT IMPLEMENTATION: Grid $(grid_points), Ranks $(ranks), Topology $(topo)")
+        println("Average Time: $(avg_time) seconds")
+        println("Min Time: $(min_time) seconds, Max Time: $(max_time) seconds")
+        
+        # Calculate performance metrics
+        Nx, Ny, Nz = grid_points
+        fftsize = Float64(Nx * Ny * Nz)
+        # 2 FFTs (forward and inverse) in the solve
+        floprate = 2.0 * 5.0 * fftsize * log2(fftsize) * 1e-9 / avg_time
+        println("Performance: $(floprate) GFlops/s")
+        println("=============================================================================")
     end
 
     # "Recompute" ∇²ϕ
